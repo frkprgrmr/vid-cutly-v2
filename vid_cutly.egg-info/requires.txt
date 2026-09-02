@@ -1,0 +1,15 @@
+fastapi<1,>=0.116
+google-genai<2,>=1.30
+google-api-python-client<3,>=2.180
+google-auth-httplib2<1,>=0.2
+google-auth-oauthlib<2,>=1.2
+imageio-ffmpeg<1,>=0.6
+opencv-python-headless<5,>=4.11
+pillow<13,>=11
+python-dotenv<2,>=1.1
+uvicorn[standard]<1,>=0.35
+yt-dlp[curl-cffi,default]>=2025.1
+
+[dev]
+httpx<1,>=0.28
+pytest<10,>=8.4

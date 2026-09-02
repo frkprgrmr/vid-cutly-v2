@@ -1,0 +1,19 @@
+Metadata-Version: 2.4
+Name: vid-cutly
+Version: 0.1.0
+Summary: Local-first AI podcast clipper
+Requires-Python: >=3.11
+Requires-Dist: fastapi<1,>=0.116
+Requires-Dist: google-genai<2,>=1.30
+Requires-Dist: google-api-python-client<3,>=2.180
+Requires-Dist: google-auth-httplib2<1,>=0.2
+Requires-Dist: google-auth-oauthlib<2,>=1.2
+Requires-Dist: imageio-ffmpeg<1,>=0.6
+Requires-Dist: opencv-python-headless<5,>=4.11
+Requires-Dist: pillow<13,>=11
+Requires-Dist: python-dotenv<2,>=1.1
+Requires-Dist: uvicorn[standard]<1,>=0.35
+Requires-Dist: yt-dlp[curl-cffi,default]>=2025.1
+Provides-Extra: dev
+Requires-Dist: httpx<1,>=0.28; extra == "dev"
+Requires-Dist: pytest<10,>=8.4; extra == "dev"

@@ -109,6 +109,9 @@ class Database:
             for name, definition in clip_migrations.items():
                 if name not in columns:
                     connection.execute(f"ALTER TABLE clips ADD COLUMN {name} {definition}")
+            connection.execute(
+                "UPDATE clips SET framing_mode = 'auto' WHERE framing_mode = 'split'"
+            )
 
     def create_job(self, url: str, rights_confirmed: bool) -> dict[str, Any]:
         job_id = uuid.uuid4().hex

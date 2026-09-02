@@ -1,5 +1,6 @@
 from backend.reframe import (
     CropPlan,
+    _build_shot_viewports,
     _keep_face_in_safe_area,
     _stabilize_positions,
     crop_expression,
@@ -34,3 +35,24 @@ def test_stabilized_tracking_limits_offset_and_pan_speed():
         abs(current[1] - previous[1]) / (current[0] - previous[0]) <= 608 * 0.22 + 0.1
         for previous, current in zip(stable, stable[1:])
     )
+
+
+def test_dynamic_viewports_become_stable_five_second_shots():
+    raw = [
+        (0.0, 3400.0, -2000.0),
+        (1.0, 3400.0, -1800.0),
+        (2.0, 3400.0, -1600.0),
+        (5.0, 1800.0, -500.0),
+        (6.0, 1750.0, -480.0),
+    ]
+
+    shots = _build_shot_viewports(
+        raw, source_width=1920, crop_width=608, duration=10
+    )
+
+    assert shots[0][0] == 0
+    assert shots[1][0] == 4.775
+    assert shots[1][1:] == shots[0][1:]
+    assert shots[2][0] == 5.225
+    assert shots[-1][0] == 10
+    assert len(shots) == 4

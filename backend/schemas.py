@@ -18,7 +18,7 @@ JobStatus = Literal[
 
 ClipStatus = Literal["pending", "selected", "rendering", "rendered", "failed"]
 YouTubeUploadStatus = Literal["idle", "uploading", "uploaded", "failed"]
-FramingMode = Literal["auto", "left", "center", "right", "fit_blur", "split"]
+FramingMode = Literal["auto", "left", "center", "right", "fit_blur"]
 
 
 class ScoreBreakdown(BaseModel):

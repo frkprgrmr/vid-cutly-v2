@@ -24,7 +24,7 @@ export type Clip = {
   output_url?: string | null;
   thumbnail_url?: string | null;
   error?: string | null;
-  framing_mode: "auto" | "left" | "center" | "right" | "fit_blur" | "split";
+  framing_mode: "auto" | "left" | "center" | "right" | "fit_blur";
   youtube_status: "idle" | "uploading" | "uploaded" | "failed";
   youtube_progress: number;
   youtube_video_id?: string | null;

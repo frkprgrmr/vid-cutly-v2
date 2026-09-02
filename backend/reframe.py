@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import cv2
@@ -15,6 +15,7 @@ class CropPlan:
     crop_width: int
     positions: list[tuple[float, float]]
     layout: str = "crop"
+    viewports: list[tuple[float, float, float]] = field(default_factory=list)
 
 
 def build_crop_plan(
@@ -43,7 +44,7 @@ def build_crop_plan(
         return CropPlan(
             source_width, source_height, crop_width, [(0.0, fixed_positions[framing_mode])]
         )
-    if framing_mode in {"fit_blur", "split"}:
+    if framing_mode == "fit_blur":
         capture.release()
         return CropPlan(
             source_width, source_height, crop_width, [(0.0, center_x)], framing_mode
@@ -62,10 +63,18 @@ def build_crop_plan(
     challenger_count = 0
     missing_face_samples = 0
     previous_patches: list[tuple[float, np.ndarray]] = []
-    sample_count = 0
-    face_sample_count = 0
-    wide_pair_sample_count = 0
     missing_face_limit = max(2, int(round(5 / sample_interval)))
+    wide_hold_limit = max(2, int(round(3 / sample_interval)))
+    wide_hold_samples = 0
+    last_wide_focus = source_width / 2
+    last_wide_width = 1080.0
+    display_width: float | None = None
+    display_focus = source_width / 2
+    viewports: list[tuple[float, float, float]] = []
+    full_display_width = 1080.0
+    close_display_width = max(
+        full_display_width, source_width * 1920 / max(1, source_height)
+    )
 
     relative = 0.0
     while start_seconds + relative <= end_seconds:
@@ -73,7 +82,6 @@ def build_crop_plan(
         ok, frame = capture.read()
         if not ok:
             break
-        sample_count += 1
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         scale = min(1.0, 720 / max(source_width, source_height))
         small = cv2.resize(gray, None, fx=scale, fy=scale) if scale < 1 else gray
@@ -107,18 +115,14 @@ def build_crop_plan(
             motion = _closest_motion(center, patch, previous_patches, source_width)
             area_score = (width * height) / max(1, source_width * source_height)
             score = area_score * (1 + min(motion / 24, 2.0))
-            faces.append((score, center))
+            faces.append((score, center, width))
             next_patches.append((center, patch))
         previous_patches = next_patches
 
         if faces:
-            face_sample_count += 1
-            centers = [face[1] for face in faces]
-            if len(centers) >= 2 and max(centers) - min(centers) >= crop_width * 0.8:
-                wide_pair_sample_count += 1
             missing_face_samples = 0
             faces.sort(reverse=True)
-            _, best_center = faces[0]
+            _, best_center, _ = faces[0]
             if current_face_center is None:
                 current_face_center = best_center
             elif abs(best_center - current_face_center) <= crop_width * 0.28:
@@ -151,20 +155,67 @@ def build_crop_plan(
                 smoothed_x, best_center, crop_width, max_x
             )
         positions.append((round(relative, 2), round(smoothed_x, 1)))
+
+        if len(faces) >= 2:
+            left_edge = min(center - width * 0.7 for _, center, width in faces)
+            right_edge = max(center + width * 0.7 for _, center, width in faces)
+            visible_source_width = min(
+                source_width,
+                max(crop_width, (right_edge - left_edge) / 0.78),
+            )
+            target_width = min(
+                close_display_width,
+                max(full_display_width, full_display_width * source_width / visible_source_width),
+            )
+            target_focus = (left_edge + right_edge) / 2
+            last_wide_focus = target_focus
+            last_wide_width = target_width
+            wide_hold_samples = wide_hold_limit
+        elif wide_hold_samples > 0:
+            target_focus = last_wide_focus
+            target_width = last_wide_width
+            wide_hold_samples -= 1
+        elif faces and current_face_center is not None:
+            target_focus = current_face_center
+            target_width = close_display_width
+        elif missing_face_samples < missing_face_limit and viewports:
+            _, target_focus, target_width = viewports[-1]
+        else:
+            target_focus = source_width / 2
+            target_width = full_display_width
+
+        if display_width is None:
+            display_width = target_width
+            display_focus = target_focus
+        else:
+            zoom_smoothing = 0.3
+            focus_smoothing = 0.34
+            display_width = (1 - zoom_smoothing) * display_width + zoom_smoothing * target_width
+            display_focus = (1 - focus_smoothing) * display_focus + focus_smoothing * target_focus
+        overlay_x = 540 - display_width * display_focus / max(1, source_width)
+        overlay_x = min(0.0, max(1080 - display_width, overlay_x))
+        viewports.append(
+            (round(relative, 2), round(display_width, 1), round(overlay_x, 1))
+        )
         relative += sample_interval
 
     capture.release()
     if not positions:
         positions = [(0.0, center_x)]
-    if framing_mode == "auto":
-        if sample_count and wide_pair_sample_count / sample_count >= 0.2:
-            return CropPlan(source_width, source_height, crop_width, [(0.0, center_x)], "split")
-        if not sample_count or face_sample_count / sample_count < 0.25:
-            return CropPlan(
-                source_width, source_height, crop_width, [(0.0, center_x)], "fit_blur"
-            )
     positions = _stabilize_positions(positions, center_x, crop_width, max_x)
-    return CropPlan(source_width, source_height, crop_width, _thin_positions(positions))
+    return CropPlan(
+        source_width,
+        source_height,
+        crop_width,
+        _thin_positions(positions),
+        "dynamic" if framing_mode == "auto" else "crop",
+        _build_shot_viewports(
+            viewports,
+            source_width=source_width,
+            crop_width=crop_width,
+            duration=max(0.0, end_seconds - start_seconds),
+        ),
+    )
 
 
 def _keep_face_in_safe_area(
@@ -217,7 +268,12 @@ def _stabilize_positions(
 
 
 def crop_expression(plan: CropPlan) -> str:
-    positions = plan.positions
+    return timeline_expression(plan.positions)
+
+
+def timeline_expression(positions: list[tuple[float, float]]) -> str:
+    if not positions:
+        return "0.0"
     if len(positions) == 1:
         return f"{positions[0][1]:.1f}"
     expression = f"{positions[-1][1]:.1f}"
@@ -257,3 +313,82 @@ def _thin_positions(positions: list[tuple[float, float]]) -> list[tuple[float, f
             thinned.append(position)
     thinned.append(positions[-1])
     return thinned
+
+
+def _build_shot_viewports(
+    viewports: list[tuple[float, float, float]],
+    *,
+    source_width: int,
+    crop_width: int,
+    duration: float,
+    shot_duration: float = 5.0,
+    transition_duration: float = 0.45,
+) -> list[tuple[float, float, float]]:
+    """Ubah tracking rapat menjadi framing seperti editor manusia.
+
+    Setiap shot menahan posisi tetap. Jika fokus bergerak di dalam satu shot,
+    framing diperlebar agar semua fokus masuk tanpa pan terus-menerus. Hanya
+    batas antar-shot yang memakai transisi singkat.
+    """
+    if not viewports:
+        return []
+    if len(viewports) == 1:
+        return viewports
+
+    buckets: list[list[tuple[float, float, float]]] = []
+    for viewport in viewports:
+        index = int(viewport[0] // shot_duration)
+        while len(buckets) <= index:
+            buckets.append([])
+        buckets[index].append(viewport)
+
+    targets: list[tuple[float, float, float]] = []
+    for index, samples in enumerate(buckets):
+        if not samples:
+            continue
+        left = float(source_width)
+        right = 0.0
+        for _, display_width, overlay_x in samples:
+            scale = max(display_width / max(1, source_width), 0.001)
+            visible_width = min(float(source_width), 1080 / scale)
+            focus = (540 - overlay_x) / scale
+            left = min(left, focus - visible_width / 2)
+            right = max(right, focus + visible_width / 2)
+        left = max(0.0, left)
+        right = min(float(source_width), right)
+        required_width = min(
+            float(source_width), max(float(crop_width), (right - left) * 1.08)
+        )
+        focus = (left + right) / 2
+        focus = min(
+            max(focus, required_width / 2), source_width - required_width / 2
+        )
+        display_width = 1080 * source_width / required_width
+        overlay_x = 540 - display_width * focus / source_width
+        overlay_x = min(0.0, max(1080 - display_width, overlay_x))
+        targets.append(
+            (index * shot_duration, round(display_width, 1), round(overlay_x, 1))
+        )
+
+    # Shot yang hampir sama memakai framing identik agar tidak ada "napas"
+    # zoom kecil yang tidak membawa informasi visual baru.
+    merged: list[tuple[float, float, float]] = []
+    for timestamp, width, x in targets:
+        if merged:
+            previous_width, previous_x = merged[-1][1], merged[-1][2]
+            zoom_difference = abs(width - previous_width) / max(previous_width, 1)
+            if zoom_difference < 0.1 and abs(x - previous_x) < 110:
+                continue
+        merged.append((timestamp, width, x))
+
+    timeline = [(0.0, merged[0][1], merged[0][2])]
+    half_transition = transition_duration / 2
+    for timestamp, width, x in merged[1:]:
+        previous_width, previous_x = timeline[-1][1], timeline[-1][2]
+        timeline.append(
+            (max(0.0, timestamp - half_transition), previous_width, previous_x)
+        )
+        timeline.append((timestamp + half_transition, width, x))
+    final_timestamp = max(duration, viewports[-1][0])
+    timeline.append((final_timestamp, timeline[-1][1], timeline[-1][2]))
+    return timeline

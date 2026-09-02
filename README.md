@@ -11,7 +11,7 @@ Web app lokal untuk mengubah satu podcast YouTube Indonesia menjadi lima kandida
 - Lima kandidat dengan skor hook, insight, emosi, keunikan, konteks mandiri, dan kecocokan short-form.
 - Preview video sumber serta edit start/end, judul, dan headline thumbnail.
 - Auto-reframe 9:16 dengan face tracking, smoothing, dan hysteresis agar perpindahan fokus tidak agresif.
-- Pilihan framing per clip: Auto, Kiri, Tengah, Kanan, Fit + Blur, atau Split-screen untuk dialog dua orang.
+- Auto-framing dinamis pada kanvas 9:16: crop satu pembicara, zoom out untuk beberapa orang, dan latar blur saat frame sumber terlihat penuh.
 - Subtitle dua baris dari subtitle Indonesia YouTube, dengan highlight kata penting.
 - Thumbnail portrait dari frame tajam dengan headline besar.
 - Penyimpanan SQLite dan file video sepenuhnya lokal.

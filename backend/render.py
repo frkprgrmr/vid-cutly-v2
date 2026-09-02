@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw, ImageFont
 from backend.captions import Cue, parse_vtt, write_ass
 from backend.config import settings
 from backend.process import ProgressCallback, probe_video, require_tool, run
-from backend.reframe import build_crop_plan, crop_expression
+from backend.reframe import build_crop_plan, crop_expression, timeline_expression
 
 
 def render_clip(
@@ -196,35 +196,59 @@ def _make_thumbnail(source, output, start, end, headline, plan) -> None:
 
 def _video_filter_graph(plan, expression: str, ass_filter_path: str) -> str:
     subtitles = f"subtitles=filename='{ass_filter_path}'"
+    if plan.layout == "dynamic" and plan.viewports:
+        width_expression = timeline_expression(
+            [(timestamp, width) for timestamp, width, _ in plan.viewports]
+        )
+        x_expression = timeline_expression(
+            [(timestamp, x) for timestamp, _, x in plan.viewports]
+        )
+        return (
+            "[0:v]split=2[dynamicbg][dynamicfg];"
+            "[dynamicbg]scale=1080:1920:force_original_aspect_ratio=increase,"
+            "crop=1080:1920,gblur=sigma=32,eq=brightness=-0.12[blurred];"
+            f"[dynamicfg]scale=w='trunc(({width_expression})/2)*2':h=-2:eval=frame,"
+            "setsar=1[foreground];"
+            f"[blurred][foreground]overlay=x='{x_expression}':y='(H-h)/2':eval=frame,"
+            f"{subtitles},setsar=1[base]"
+        )
     if plan.layout == "fit_blur":
         return (
             "[0:v]split=2[fitbg][fitfg];"
             "[fitbg]scale=1080:1920:force_original_aspect_ratio=increase,"
-            "crop=1080:1920,gblur=sigma=32[blurred];"
-            "[fitfg]scale=1080:1920:force_original_aspect_ratio=decrease[foreground];"
-            f"[blurred][foreground]overlay=(W-w)/2:(H-h)/2,{subtitles}[base]"
-        )
-    if plan.layout == "split":
-        return (
-            "[0:v]split=2[splitleft][splitright];"
-            "[splitleft]crop=iw/2:ih:0:0,"
-            "scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960[left];"
-            "[splitright]crop=iw/2:ih:iw/2:0,"
-            "scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960[right];"
-            f"[left][right]vstack=inputs=2,{subtitles}[base]"
+            "crop=1080:1920,gblur=sigma=32,eq=brightness=-0.12[blurred];"
+            "[fitfg]scale=1080:1920:force_original_aspect_ratio=decrease,setsar=1[foreground];"
+            f"[blurred][foreground]overlay=(W-w)/2:(H-h)/2,{subtitles},setsar=1[base]"
         )
     if plan.source_width >= plan.crop_width and plan.crop_width > 0:
         return (
             f"[0:v]crop={plan.crop_width}:{plan.source_height}:'{expression}':0,"
-            f"scale=1080:1920:flags=lanczos,{subtitles}[base]"
+            f"scale=1080:1920:flags=lanczos,{subtitles},setsar=1[base]"
         )
     return (
         "[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,"
-        f"pad=1080:1920:(ow-iw)/2:(oh-ih)/2,{subtitles}[base]"
+        f"pad=1080:1920:(ow-iw)/2:(oh-ih)/2,{subtitles},setsar=1[base]"
     )
 
 
 def _portrait_frame(frame: np.ndarray, plan) -> np.ndarray:
+    if plan.layout == "dynamic" and plan.viewports:
+        _, display_width, overlay_x = plan.viewports[len(plan.viewports) // 2]
+        background = cv2.GaussianBlur(_cover_resize(frame, 1080, 1920), (0, 0), 32)
+        background = cv2.convertScaleAbs(background, alpha=0.78, beta=0)
+        scale = display_width / frame.shape[1]
+        foreground = cv2.resize(
+            frame,
+            (max(1, round(display_width)), max(1, round(frame.shape[0] * scale))),
+            interpolation=cv2.INTER_LANCZOS4,
+        )
+        _overlay_frame(
+            background,
+            foreground,
+            round(overlay_x),
+            (1920 - foreground.shape[0]) // 2,
+        )
+        return background
     if plan.layout == "fit_blur":
         background = _cover_resize(frame, 1080, 1920)
         background = cv2.GaussianBlur(background, (0, 0), 32)
@@ -238,12 +262,6 @@ def _portrait_frame(frame: np.ndarray, plan) -> np.ndarray:
         x = (1080 - foreground.shape[1]) // 2
         background[y : y + foreground.shape[0], x : x + foreground.shape[1]] = foreground
         return background
-    if plan.layout == "split":
-        midpoint = frame.shape[1] // 2
-        left = _cover_resize(frame[:, :midpoint], 1080, 960)
-        right = _cover_resize(frame[:, midpoint:], 1080, 960)
-        return np.vstack((left, right))
-
     height, width = frame.shape[:2]
     crop_width = min(width, int(height * 9 / 16))
     mid_x = plan.positions[len(plan.positions) // 2][1] if plan.positions else (width - crop_width) / 2
@@ -262,6 +280,28 @@ def _cover_resize(frame: np.ndarray, width: int, height: int) -> np.ndarray:
     x = max(0, (resized.shape[1] - width) // 2)
     y = max(0, (resized.shape[0] - height) // 2)
     return resized[y : y + height, x : x + width]
+
+
+def _overlay_frame(
+    background: np.ndarray, foreground: np.ndarray, x: int, y: int
+) -> None:
+    destination_height, destination_width = background.shape[:2]
+    source_height, source_width = foreground.shape[:2]
+    source_x = max(0, -x)
+    source_y = max(0, -y)
+    destination_x = max(0, x)
+    destination_y = max(0, y)
+    copy_width = min(source_width - source_x, destination_width - destination_x)
+    copy_height = min(source_height - source_y, destination_height - destination_y)
+    if copy_width <= 0 or copy_height <= 0:
+        return
+    background[
+        destination_y : destination_y + copy_height,
+        destination_x : destination_x + copy_width,
+    ] = foreground[
+        source_y : source_y + copy_height,
+        source_x : source_x + copy_width,
+    ]
 
 
 def _font_path() -> str:

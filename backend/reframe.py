@@ -164,7 +164,8 @@ def build_crop_plan(
                 source_width, source_height, crop_width, [(0.0, center_x)], "fit_blur"
             )
     positions = _stabilize_positions(positions, center_x, crop_width, max_x)
-    return CropPlan(source_width, source_height, crop_width, _thin_positions(positions))
+    positions = _lock_positions_to_shots(positions, crop_width=crop_width)
+    return CropPlan(source_width, source_height, crop_width, positions)
 
 
 def _keep_face_in_safe_area(
@@ -222,12 +223,38 @@ def crop_expression(plan: CropPlan) -> str:
         return f"{positions[0][1]:.1f}"
     expression = f"{positions[-1][1]:.1f}"
     for index in range(len(positions) - 2, -1, -1):
-        t0, x0 = positions[index]
-        t1, x1 = positions[index + 1]
-        span = max(t1 - t0, 0.01)
-        interpolated = f"({x0:.1f}+({x1:.1f}-{x0:.1f})*(t-{t0:.2f})/{span:.2f})"
-        expression = f"if(lt(t\\,{t1:.2f})\\,{interpolated}\\,{expression})"
+        _, x0 = positions[index]
+        next_time, _ = positions[index + 1]
+        expression = f"if(lt(t\\,{next_time:.2f})\\,{x0:.1f}\\,{expression})"
     return expression
+
+
+def _lock_positions_to_shots(
+    positions: list[tuple[float, float]],
+    *,
+    crop_width: int,
+    shot_duration: float = 5.0,
+) -> list[tuple[float, float]]:
+    """Kunci crop per shot agar kamera virtual tidak terus bergerak."""
+    if len(positions) <= 1:
+        return positions
+    buckets: list[list[float]] = []
+    for timestamp, x in positions:
+        index = int(timestamp // shot_duration)
+        while len(buckets) <= index:
+            buckets.append([])
+        buckets[index].append(x)
+
+    locked: list[tuple[float, float]] = []
+    minimum_change = crop_width * 0.12
+    for index, values in enumerate(buckets):
+        if not values:
+            continue
+        target = round(float(np.median(values)), 1)
+        if locked and abs(target - locked[-1][1]) < minimum_change:
+            continue
+        locked.append((index * shot_duration, target))
+    return locked or [positions[0]]
 
 
 def _closest_motion(

@@ -1,12 +1,13 @@
 from backend.reframe import (
     CropPlan,
     _keep_face_in_safe_area,
+    _lock_positions_to_shots,
     _stabilize_positions,
     crop_expression,
 )
 
 
-def test_crop_expression_interpolates_positions():
+def test_crop_expression_cuts_between_locked_positions():
     plan = CropPlan(
         source_width=1920,
         source_height=1080,
@@ -16,6 +17,7 @@ def test_crop_expression_interpolates_positions():
     expression = crop_expression(plan)
     assert "if(lt(t\\,1.50)" in expression
     assert "350.0" in expression
+    assert "*(t-" not in expression
 
 
 def test_face_is_kept_away_from_crop_edges():
@@ -34,3 +36,18 @@ def test_stabilized_tracking_limits_offset_and_pan_speed():
         abs(current[1] - previous[1]) / (current[0] - previous[0]) <= 608 * 0.22 + 0.1
         for previous, current in zip(stable, stable[1:])
     )
+
+
+def test_tracking_is_locked_into_stable_five_second_shots():
+    positions = [
+        (0.0, 500.0),
+        (1.0, 540.0),
+        (2.0, 520.0),
+        (5.0, 900.0),
+        (6.0, 940.0),
+        (10.0, 910.0),
+    ]
+
+    locked = _lock_positions_to_shots(positions, crop_width=608)
+
+    assert locked == [(0.0, 520.0), (5.0, 920.0)]

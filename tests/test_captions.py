@@ -32,9 +32,10 @@ Jangan takut untuk memulai.
     )
     contents = output.read_text(encoding="utf-8")
     assert "Dialogue:" in contents
-    assert "rahasia bisnis" in contents
-    assert r"{\c&H00D7FF&}" in contents
-    assert "source: Channel Contoh" in contents
+    assert "RAHASIA" in contents and "BISNIS" in contents
+    assert "ActiveBox" in contents and "ActiveText" in contents
+    assert r"\pos(540,1080)" in contents
+    assert "TONTON SELENGKAPNYA DI Channel Contoh" in contents
 
 
 def test_parse_vtt_supports_timestamp_without_hours(tmp_path: Path):
@@ -75,3 +76,4 @@ Ini<00:00:12.300><c> sinkron.</c>
     assert cues[1].start == 12.01
     assert cues[1].end == 13.5
     assert all(cue.end - cue.start > 0.1 for cue in cues)
+    assert [word.text for word in cues[0].words] == ["Halo", "dunia", "sekarang."]

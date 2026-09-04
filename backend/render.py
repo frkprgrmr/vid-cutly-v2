@@ -213,6 +213,24 @@ def _video_filter_graph(plan, expression: str, ass_filter_path: str) -> str:
             "scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960[right];"
             f"[left][right]vstack=inputs=2,{subtitles}[base]"
         )
+    if plan.layout == "group":
+        return (
+            "[0:v]split=2[groupbg][groupfg];"
+            "[groupbg]scale=1080:1920:force_original_aspect_ratio=increase,"
+            "crop=1080:1920,gblur=sigma=32[blurred];"
+            "[groupfg]scale=1080:960:force_original_aspect_ratio=increase,"
+            "crop=1080:960[groupframe];"
+            f"[blurred][groupframe]overlay=0:(H-h)/2,{subtitles}[base]"
+        )
+    if plan.layout == "stacked":
+        return (
+            "[0:v]split=2[group][speaker];"
+            "[group]scale=1080:960:force_original_aspect_ratio=increase,"
+            "crop=1080:960[groupframe];"
+            f"[speaker]crop={plan.crop_width}:{plan.source_height}:'{expression}':0,"
+            "scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960[speakerframe];"
+            f"[groupframe][speakerframe]vstack=inputs=2,{subtitles}[base]"
+        )
     if plan.source_width >= plan.crop_width and plan.crop_width > 0:
         return (
             f"[0:v]crop={plan.crop_width}:{plan.source_height}:'{expression}':0,"
@@ -243,6 +261,20 @@ def _portrait_frame(frame: np.ndarray, plan) -> np.ndarray:
         left = _cover_resize(frame[:, :midpoint], 1080, 960)
         right = _cover_resize(frame[:, midpoint:], 1080, 960)
         return np.vstack((left, right))
+    if plan.layout == "group":
+        background = _cover_resize(frame, 1080, 1920)
+        background = cv2.GaussianBlur(background, (0, 0), 32)
+        group = _cover_resize(frame, 1080, 960)
+        background[480:1440] = group
+        return background
+    if plan.layout == "stacked":
+        group = _cover_resize(frame, 1080, 960)
+        height, width = frame.shape[:2]
+        crop_width = min(width, int(height * 9 / 16))
+        mid_x = plan.positions[len(plan.positions) // 2][1] if plan.positions else (width - crop_width) / 2
+        crop_x = int(min(max(mid_x, 0), max(0, width - crop_width)))
+        speaker = _cover_resize(frame[:, crop_x : crop_x + crop_width], 1080, 960)
+        return np.vstack((group, speaker))
 
     height, width = frame.shape[:2]
     crop_width = min(width, int(height * 9 / 16))

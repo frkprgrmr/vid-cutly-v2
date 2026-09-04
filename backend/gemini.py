@@ -13,10 +13,14 @@ ANALYSIS_PROMPT = """
 Anda adalah editor short-form senior untuk podcast Indonesia. Analisis SATU video ini dari
 audio, transkrip, ekspresi wajah, perubahan energi suara, dan konteks percakapan.
 
-Pilih 5 kandidat clip terbaik yang masing-masing berdurasi 25–90 detik. Kandidat harus:
-- memiliki hook yang kuat dalam 1–3 detik pertama;
+Pilih 5 kandidat clip terbaik yang masing-masing idealnya berdurasi 35–60 detik
+(boleh 25–90 detik bila konteks memang membutuhkannya). Kandidat harus:
+- mulai tepat pada kata pertama hook, tanpa salam, jeda kosong, atau ancang-ancang;
+- memiliki hook yang kuat dalam 1–2 detik pertama;
 - dapat dipahami tanpa menonton podcast penuh;
-- tidak memotong kalimat atau kesimpulan penting;
+- berakhir sesudah punchline, jawaban, atau reaction selesai; jangan memotong tawa
+  dan jangan menyisakan ekor percakapan yang lemah;
+- tidak memotong kata, kalimat, atau kesimpulan penting;
 - mengutamakan insight, emosi, humor, konflik sehat, atau sudut pandang unik;
 - tidak saling tumpang tindih lebih dari 5 detik;
 - memakai timestamp detik yang akurat dari awal video.
@@ -30,8 +34,9 @@ menyatakan sesuatu yang tidak benar-benar ada pada segmen. Keywords berisi maksi
 8 kata/frasa penting dari ucapan untuk disorot pada subtitle.
 
 Untuk setiap kandidat, transkripsikan dialog segmen menjadi subtitles. Gunakan timestamp
-absolut dari awal video, potong menjadi frasa pendek maksimal 8 kata, dan jangan mengarang
-ucapan. Subtitle ini menjadi fallback bila subtitle YouTube tidak tersedia.
+absolut dari awal video dan sinkronkan sedekat mungkin ke kata yang diucapkan. Potong menjadi
+frasa sangat pendek 2–5 kata (maksimal 6 hanya bila tidak bisa dipecah), satu ide per frasa,
+dan jangan mengarang ucapan. Subtitle ini menjadi fallback bila subtitle YouTube tidak tersedia.
 
 Urutkan kandidat dari skor total tertinggi. Keluarkan hanya JSON tanpa markdown dengan
 struktur persis berikut. Semua key wajib ada pada setiap kandidat dan subtitle:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import html
 import re
 import textwrap
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -19,6 +19,14 @@ INLINE_TIMESTAMP = re.compile(
 
 @dataclass
 class Cue:
+    start: float
+    end: float
+    text: str
+    words: list["WordCue"] = field(default_factory=list)
+
+
+@dataclass
+class WordCue:
     start: float
     end: float
     text: str
@@ -54,28 +62,28 @@ def parse_vtt(path: Path | None) -> list[Cue]:
     return _group_timed_words(timed_words) if timed_words else cues
 
 
-def _parse_timed_line(line: str, cue_start: float, cue_end: float) -> list[Cue]:
-    words: list[Cue] = []
+def _parse_timed_line(line: str, cue_start: float, cue_end: float) -> list[WordCue]:
+    words: list[WordCue] = []
     cursor = 0
     start = cue_start
     for match in INLINE_TIMESTAMP.finditer(line):
         end = _inline_seconds(match)
         text = _clean_vtt_text(line[cursor : match.start()])
         if text and end > start:
-            words.append(Cue(start=start, end=end, text=text))
+            words.append(WordCue(start=start, end=end, text=text))
         start = end
         cursor = match.end()
     text = _clean_vtt_text(line[cursor:])
     if text and cue_end > start:
-        words.append(Cue(start=start, end=cue_end, text=text))
+        words.append(WordCue(start=start, end=cue_end, text=text))
     return words
 
 
-def _group_timed_words(words: list[Cue]) -> list[Cue]:
+def _group_timed_words(words: list[WordCue]) -> list[Cue]:
     if not words:
         return []
     groups: list[Cue] = []
-    current: list[Cue] = []
+    current: list[WordCue] = []
     for word in sorted(words, key=lambda item: (item.start, item.end)):
         if current and word.start < current[-1].start:
             continue
@@ -84,7 +92,7 @@ def _group_timed_words(words: list[Cue]) -> list[Cue]:
             current
             and (
                 word.start - current[-1].end > 0.45
-                or word.start - current[0].start > 1.8
+                or word.start - current[0].start > 1.65
                 or word_count + len(word.text.split()) > 5
                 or re.search(r"[.!?…]$", current[-1].text)
             )
@@ -98,11 +106,12 @@ def _group_timed_words(words: list[Cue]) -> list[Cue]:
     return groups
 
 
-def _word_group(words: list[Cue]) -> Cue:
+def _word_group(words: list[WordCue]) -> Cue:
     return Cue(
         start=words[0].start,
         end=words[-1].end,
         text=re.sub(r"\s+", " ", " ".join(word.text for word in words)).strip(),
+        words=list(words),
     )
 
 
@@ -138,22 +147,19 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Subtitle,DejaVu Sans,64,&H00FFFFFF,&H0000D7FF,&H00100B20,&H80000000,-1,0,0,0,100,100,0,0,1,5,1,2,80,80,210,1
-Style: Title,DejaVu Sans,68,&H00FFFFFF,&H0000D7FF,&H00100B20,&H80000000,-1,0,0,0,100,100,0,0,1,5,1,8,70,70,130,1
-Style: Attribution,DejaVu Sans,30,&H00FFFFFF,&H0000D7FF,&H00100B20,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,7,104,48,1008,1
+Style: Subtitle,DejaVu Sans,60,&H0000E7FF,&H0000E7FF,&H00120B20,&H00000000,-1,-1,0,0,100,100,0,0,1,5,1,5,70,70,0,1
+Style: ActiveBox,DejaVu Sans,60,&H00FFFFFF,&H00FFFFFF,&H00FFFFFF,&H00FFFFFF,-1,-1,0,0,100,100,0,0,3,7,0,5,0,0,0,1
+Style: ActiveText,DejaVu Sans,60,&H0000E7FF,&H0000E7FF,&H00120B20,&H00000000,-1,-1,0,0,100,100,0,0,1,5,0,5,0,0,0,1
+Style: Attribution,DejaVu Sans,27,&H00FFFFFF,&H00FFFFFF,&H00100B20,&H00000000,-1,0,0,0,100,100,0,0,1,2,0,8,70,70,78,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     duration = max(0, clip_end - clip_start)
     lines = [header]
-    title_text = _ass_escape(textwrap.fill(title.upper(), width=24).replace("\n", r"\N"))
-    lines.append(
-        f"Dialogue: 1,{_ass_time(0)},{_ass_time(duration)},Title,,0,0,0,,{title_text}\n"
-    )
     if source_channel:
         attribution = textwrap.shorten(
-            f"source: {source_channel}", width=48, placeholder="…"
+            f"TONTON SELENGKAPNYA DI {source_channel}", width=58, placeholder="…"
         )
         lines.append(
             f"Dialogue: 3,{_ass_time(0)},{_ass_time(duration)},Attribution,,0,0,0,,"
@@ -164,13 +170,68 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         end = min(cue.end, clip_end)
         if end <= start:
             continue
-        wrapped = textwrap.fill(cue.text, width=32, max_lines=2, placeholder="…")
-        text = _highlight(_ass_escape(wrapped).replace("\n", r"\N"), keywords)
+        display_words = cue.text.upper().split()
+        rows = _subtitle_rows(display_words)
+        text = r"\N".join(_ass_escape(" ".join(row)) for row in rows)
         lines.append(
             f"Dialogue: 2,{_ass_time(start - clip_start)},{_ass_time(end - clip_start)},"
-            f"Subtitle,,0,0,0,,{text}\n"
+            f"Subtitle,,0,0,0,,{{\\an5\\pos(540,1080)}}{text}\n"
         )
+        word_timings = cue.words or _estimate_word_timings(cue, display_words)
+        positions = _word_positions(rows)
+        for timing, (word, x, y) in zip(word_timings, positions):
+            word_start = max(timing.start, clip_start, start)
+            word_end = min(timing.end, clip_end, end)
+            if word_end <= word_start:
+                continue
+            lines.append(
+                f"Dialogue: 4,{_ass_time(word_start - clip_start)},"
+                f"{_ass_time(word_end - clip_start)},ActiveBox,,0,0,0,,"
+                f"{{\\an5\\pos({x},{y})}}{_ass_escape(word.upper())}\n"
+            )
+            lines.append(
+                f"Dialogue: 5,{_ass_time(word_start - clip_start)},"
+                f"{_ass_time(word_end - clip_start)},ActiveText,,0,0,0,,"
+                f"{{\\an5\\pos({x},{y})}}{_ass_escape(word.upper())}\n"
+            )
     path.write_text("".join(lines), encoding="utf-8")
+
+
+def _subtitle_rows(words: list[str]) -> list[list[str]]:
+    if len(words) <= 3:
+        return [words]
+    split = (len(words) + 1) // 2
+    return [words[:split], words[split:]]
+
+
+def _word_positions(rows: list[list[str]]) -> list[tuple[str, int, int]]:
+    # DejaVu Sans 60 di PlayResX 1080 rata-rata ~35 px per karakter.
+    # Posisi ini sengaja stabil di tengah, seperti caption podcast referensi.
+    positions: list[tuple[str, int, int]] = []
+    line_gap = 74
+    first_y = 1080 - (len(rows) - 1) * line_gap // 2
+    for row_index, row in enumerate(rows):
+        widths = [max(34, round(len(word) * 35.5)) for word in row]
+        spaces = 22 * max(0, len(row) - 1)
+        cursor = 540 - (sum(widths) + spaces) / 2
+        for word, width in zip(row, widths):
+            positions.append((word, round(cursor + width / 2), first_y + row_index * line_gap))
+            cursor += width + 22
+    return positions
+
+
+def _estimate_word_timings(cue: Cue, words: list[str]) -> list[WordCue]:
+    if not words:
+        return []
+    weights = [max(1, len(re.sub(r"\W", "", word))) for word in words]
+    total = sum(weights)
+    cursor = cue.start
+    timings: list[WordCue] = []
+    for index, (word, weight) in enumerate(zip(words, weights)):
+        end = cue.end if index == len(words) - 1 else cursor + (cue.end - cue.start) * weight / total
+        timings.append(WordCue(cursor, end, word))
+        cursor = end
+    return timings
 
 
 def _seconds(match: re.Match, prefix: str) -> float:
